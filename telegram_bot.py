@@ -1,85 +1,61 @@
-import os
-import time
-import threading
-from flask import Flask
-import telebot
+import os, requests, feedparser, yfinance as yf
 
-TOKEN = '8883664398:AAE_qBpUM9a8PzeVZ3p4VDP7fmAjxGwP_ks'
-bot = telebot.TeleBot(TOKEN)
+TOKEN = os.environ["TOKEN"]
+CHAT_ID = os.environ["CHAT_ID"]
 
-app = Flask(__name__)
+STOCKS = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AMD","AVGO","NFLX"]
+COMMODITIES = {"الذهب":"GC=F","النفط":"CL=F","الفضة":"SI=F","الغاز":"NG=F","النحاس":"HG=F"}
+NEWS_SYMBOLS = ["^GSPC","GC=F","CL=F"]
 
-@app.route('/')
-def home():
-    return "SwingX Bot is active and running 24/7!"
+def rsi(s, n=14):
+    d = s.diff()
+    up = d.clip(lower=0).rolling(n).mean()
+    dn = (-d.clip(upper=0)).rolling(n).mean()
+    return 100 - 100 / (1 + up / dn)
 
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+def scan(name, sym):
+    df = yf.download(sym, period="1y", interval="1d", progress=False, auto_adjust=True)
+    if df.empty or len(df) < 60:
+        return None
+    df.columns = df.columns.get_level_values(0)
+    c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
+    price = float(c.iloc[-1])
+    breakout = price > float(h.iloc[-21:-1].max())
+    trend = price > float(c.ewm(span=50).mean().iloc[-1])
+    r = float(rsi(c).iloc[-1])
+    avg_v = float(v.iloc[-21:-1].mean())
+    vol_ok = avg_v > 0 and float(v.iloc[-1]) >= 1.2 * avg_v
+    atr = float((h - l).rolling(14).mean().iloc[-1])
+    if breakout and trend and 50 < r < 75 and vol_ok:
+        sl = price - 1.5 * atr
+        tp = price + 3 * atr
+        return (f"📌 {name}\n🔹 دخول: {price:.2f}\n🛑 وقف: {sl:.2f}\n"
+                f"🎯 هدف: {tp:.2f}\n📊 RSI: {r:.1f}")
+    return None
 
-# دالة توليد التقرير بالتنسيق الذي طلبته
-def generate_market_report():
-    report = """🚀 تقرير المسح المتقدم - 📈 تداول سوينغ (Swing - Daily)
------------------------------------
+def news():
+    out = []
+    for s in NEWS_SYMBOLS:
+        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={s}&region=US&lang=en-US"
+        for e in feedparser.parse(url).entries[:2]:
+            out.append(f"• {e.title}\n{e.link}")
+    return out
 
-📌 الأسهم الأمريكية:
-- MSFT
-🔹 السعر الحالي / الشراء: 540.01
-🎯 هدف البيع المقترح: 615.23
-🛑 وقف الخسارة المقترح: 502.40
-📊 مؤشر RSI: 77.5
--------------------------
-💱 الفوركس (GBPJPY):
-BUY NOW
+def main():
+    trades = []
+    for s in STOCKS:
+        t = scan(s, s)
+        if t: trades.append(t)
+    for name, sym in COMMODITIES.items():
+        t = scan(name, sym)
+        if t: trades.append(t)
 
-Entry: 208.670
-SL: 208.100
-TP1: 208.830
-TP2: 209.250
-TP3: 209.600"""
-    return report
+    msg = "🚀 تقرير السوق اليومي\n\n"
+    msg += "\n\n".join(trades) if trades else "لا توجد فرص قوية اليوم."
+    msg += "\n\n📰 أخبار:\n" + "\n".join(news())
+    msg += "\n\n⚠️ للمعلومات فقط، وليست نصيحة استثمارية."
 
-# دالة مساعدة لإنشاء لوحة المفاتيح بشكل دائم
-def get_main_keyboard():
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = telebot.types.KeyboardButton('📊 تقرير السوق اليومي')
-    btn2 = telebot.types.KeyboardButton('💥 أسهم انفجارية')
-    markup.add(btn1, btn2)
-    return markup
+    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                  json={"chat_id": CHAT_ID, "text": msg[:4000]})
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    welcome_text = (
-        "🤖 مرحباً بك في SwingX Bot!\n\n"
-        "مساعدك الذكي لتتبع استراتيجية سوينغ الزخم، الاختراقات، والدورات الزمنية.\n\n"
-        "اختر إحدى المهام من القائمة أدناه للبدء:"
-    )
-    bot.send_message(chat_id, welcome_text, reply_markup=get_main_keyboard())
-
-@bot.message_handler(func=lambda message: True)
-def handle_messages(message):
-    chat_id = message.chat.id
-    text = message.text
-    
-    if text == '📊 تقرير السوق اليومي':
-        report = generate_market_report()
-        bot.send_message(chat_id, report, reply_markup=get_main_keyboard())
-    elif text == '💥 أسهم انفجارية':
-        explosive_text = "🔍 جاري مسح الأسهم الانفجارية والاختراقات الحالية...\n\n- MSFT: 540.80 | انفجار سعري (RSI: 77.8)"
-        bot.send_message(chat_id, explosive_text, reply_markup=get_main_keyboard())
-    else:
-        bot.send_message(chat_id, "يرجى استخدام الأزرار الموجودة في الأسفل:", reply_markup=get_main_keyboard())
-
-if __name__ == '__main__':
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    print("Bot is starting polling...")
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            time.sleep(15)
+main()
