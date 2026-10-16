@@ -1,15 +1,29 @@
 import os
 import json
 import subprocess
+import threading
+from flask import Flask
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 
-# التوكن الخاص بـ SwingX
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8883664398:AAE_qBpUM9a8PzeVZ3p4VDP7fmAjxGwP_ks")
+# --- 1. خادم ويب مصغر لإبقاء الخدمة مجانية على Render ---
+app = Flask(__name__)
 
+@app.route('/')
+def home():
+    return "SwingX Bot is running 24/7 Free!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# تشغيل خادم الويب في الخلفية
+threading.Thread(target=run_flask, daemon=True).start()
+
+# --- 2. كود البوت الأصلي ---
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8883664398:AAE_qBpUM9a8PzeVZ3p4VDP7fmAjxGwP_ks")
 bot = telebot.TeleBot(TOKEN)
 
-# لوحة الأزرار الرئيسية لـ SwingX
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -34,7 +48,6 @@ def handle_messages(message):
     chat_id = message.chat.id
     text = message.text
 
-    # 1. تشغيل فحص السوق اليومي
     if "فحص السوق" in text or text == "/scan":
         bot.send_message(chat_id, "🔍 **[SwingX]** جاري تشغيل فحص السوق اليومي وتحليل المتوسطات...")
         try:
@@ -44,7 +57,6 @@ def handle_messages(message):
         except Exception as e:
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء تشغيل الفحص: {e}")
 
-    # 2. البحث عن الأسهم الانفجارية
     elif "أسهم انفجارية" in text or text == "/explosive":
         bot.send_message(chat_id, "💥 **[SwingX]** جاري البحث عن الأسهم الانفجارية والرخيصة ذات السيولة العالية...")
         try:
@@ -54,7 +66,6 @@ def handle_messages(message):
         except Exception as e:
             bot.send_message(chat_id, f"❌ حدث خطأ: {e}")
 
-    # 3. عرض الصفقات الحالية والافتراضية
     elif "الصفقات الحالية" in text or text == "/positions":
         if os.path.exists("positions.json"):
             try:
@@ -73,7 +84,6 @@ def handle_messages(message):
         else:
             bot.send_message(chat_id, "📂 ملف الصفقات `positions.json` غير موجود بعد.")
 
-    # 4. تشغيل الاختبار التاريخي (Backtest)
     elif "الاختبار التاريخي" in text or text == "/backtest":
         bot.send_message(chat_id, "📈 **[SwingX]** جاري تشغيل الاختبار التاريخي الاستراتيجي (`backtest_full.py`)... قد يستغرق هذا دقيقة.")
         try:
